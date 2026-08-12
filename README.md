@@ -8,7 +8,7 @@ Hands-on Kubernetes configurations, manifests, and deployment examples.
 
 ---
 
-# User's Edge Browser Tabs Metadata
+## User's Edge Browser Tabs Metadata
 
 The tab with `IsCurrent=true` is the user's currently active/viewing tab, while tabs with `IsCurrent=false` are other open tabs in the background.
 
@@ -21,5 +21,4 @@ edge_all_open_tabs = [
     "isCurrent": true
   }
 ]
-
 
