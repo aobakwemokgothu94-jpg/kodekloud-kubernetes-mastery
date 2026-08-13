@@ -1,1 +1,128 @@
+# Update Deployment and Service in Kubernetes
 
+An application deployed on the Kubernetes cluster requires an update with new features developed by the Nautilus application development team. The existing setup includes a deployment named `nginx-deployment` and a service named `nginx-service`. Below are the necessary changes to be implemented without deleting the deployment and service:
+
+1. Modify the service nodeport from `30008` to `32165`
+
+2. Change the replicas count from `1` to `5`
+
+3. Update the image from `nginx:1.17` to `nginx:latest`
+
+## Verify Current State
+
+**Check Deployment Status:**
+```sh
+kubectl get deployment nginx-deployment
+```
+
+```
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+nginx-deployment   1/1     1            1           2m46s
+```
+
+**Check Service Status:**
+```sh
+kubectl get svc nginx-service
+```
+
+```
+NAME            TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
+nginx-service   NodePort   10.96.185.114   <none>        80:30008/TCP   2m46s
+```
+
+
+## Task 1: Modify Service NodePort (30008 → 32165)
+
+```
+kubectl edit svc nginx-service
+```
+
+Find: `nodePort: 30008`
+
+Change it to: `nodePort: 32165`
+
+**From status output, you can see the changed nodeport:**
+```
+kubectl get svc nginx-service
+```
+```
+NAME            TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
+nginx-service   NodePort   10.96.185.114   <none>        80:32165/TCP   9m45s
+```
+
+
+## Task 2: Change Replicas (1 → 5)
+
+```sh
+kubectl scale deployment nginx-deployment --replicas=5
+```
+
+**Verify: You should see 5 pods.**
+
+```
+kubectl get pods
+```
+
+```
+NAME                                READY   STATUS    RESTARTS   AGE
+nginx-deployment-5dd558cf95-8bcfb   1/1     Running   0          7s
+nginx-deployment-5dd558cf95-8xkkk   1/1     Running   0          7s
+nginx-deployment-5dd558cf95-gpbdh   1/1     Running   0          11m
+nginx-deployment-5dd558cf95-vgpz7   1/1     Running   0          7s
+nginx-deployment-5dd558cf95-x825j   1/1     Running   0          7s
+```
+
+## Task 3: Update Image (nginx:1.17 → nginx:latest)
+
+**Find the Correct Container Name:**
+
+```sh
+kubectl get deployment nginx-deployment \
+  -o jsonpath='{.spec.template.spec.containers[*].name}'
+```
+
+**Update the Image Using Correct Container Name:**
+
+```sh
+kubectl set image deployment/nginx-deployment nginx-container=nginx:latest
+```
+
+**Verify rollout:**
+
+```sh
+kubectl rollout status deployment/nginx-deployment
+```
+
+```
+Waiting for deployment "nginx-deployment" rollout to finish: 3 out of 5 new replicas have been updated...
+Waiting for deployment "nginx-deployment" rollout to finish: 3 out of 5 new replicas have been updated...
+Waiting for deployment "nginx-deployment" rollout to finish: 3 out of 5 new replicas have been updated...
+Waiting for deployment "nginx-deployment" rollout to finish: 4 out of 5 new replicas have been updated...
+Waiting for deployment "nginx-deployment" rollout to finish: 4 out of 5 new replicas have been updated...
+Waiting for deployment "nginx-deployment" rollout to finish: 2 old replicas are pending termination...
+Waiting for deployment "nginx-deployment" rollout to finish: 2 old replicas are pending termination...
+Waiting for deployment "nginx-deployment" rollout to finish: 2 old replicas are pending termination...
+Waiting for deployment "nginx-deployment" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "nginx-deployment" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "nginx-deployment" rollout to finish: 1 old replicas are pending termination...
+deployment "nginx-deployment" successfully rolled out
+```
+
+## Confirm Image & Replicas
+
+**Check current container image in use:**
+```sh
+kubectl describe deployment nginx-deployment | grep -i image
+```
+```
+    Image:         nginx:latest
+```
+
+**Check replica under deployment:**
+```sh
+kubectl get deployment nginx-deployment
+```
+```
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+nginx-deployment   5/5     5            5           18m
+```
