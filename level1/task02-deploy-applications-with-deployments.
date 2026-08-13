@@ -1,1 +1,17 @@
+# Kubernetes Mastery - Level 1, Task 01
+## Deploy Pods in Kubernetes Cluster
+
+### Task Description
+Deploy a Pod in the Kubernetes cluster using a YAML manifest.
+
+### Steps Taken
+- Created Pod manifest (`manifests/pod.yaml`)
+- Applied manifest: `kubectl apply -f manifests/pod.yaml`
+- Verified Pod status: `kubectl get pods`
+
+### Verification
+Pod was created successfully and is running.
+
+### Screenshots
+Add terminal outputs or dashboard captures here.
 
