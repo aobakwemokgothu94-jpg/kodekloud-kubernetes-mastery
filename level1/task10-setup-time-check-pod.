@@ -1,1 +1,76 @@
+# Set Up Time Check Pod in Kubernetes
 
+The Nautilus DevOps team needs a time check pod created in a specific Kubernetes namespace for logging purposes. Initially, it's for testing, but it may be integrated into an existing cluster later. Here's what's required:
+
+1. Create a pod called `time-check` in the `devops` namespace. The pod should contain a container named `time-check`, utilizing the `busybox ` image with the `latest` tag (specify as `busybox:latest`).
+
+2. Create a config map named `time-config` with the data `TIME_FREQ=3` in the same namespace.
+
+3. Configure the time-check container to execute the command: `while true; do date; sleep $TIME_FREQ;done`. Ensure the result is written `/opt/security/time/time-check.log.` Also, add an environmental variable `TIME_FREQ` in the container, fetching its value from the config map `TIME_FREQ` key.
+
+4. Create a volume `log-volume` and mount it at `/opt/security/time` within the container.
+
+**`time-check.yaml`**
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devops
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: time-config
+  namespace: devops
+data:
+  TIME_FREQ: "3"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: time-check
+  namespace: devops
+spec:
+  volumes:
+    - name: log-volume
+      emptyDir: {}
+  containers:
+    - name: time-check
+      image: busybox:latest
+      env:
+        - name: TIME_FREQ
+          valueFrom:
+            configMapKeyRef:
+              name: time-config
+              key: TIME_FREQ
+      command:
+        - sh
+        - -c
+        - |
+          mkdir -p /opt/security/time && \
+          while true; do date >> /opt/security/time/time-check.log; sleep $TIME_FREQ; done
+      volumeMounts:
+        - name: log-volume
+          mountPath: /opt/security/time
+```
+
+### Apply the configuration
+
+```bash
+kubectl apply -f time-check.yaml
+```
+
+### Check namespace, pod, and configmap
+
+```bash
+kubectl get ns devops
+kubectl get pod time-check -n devops
+kubectl get configmap time-config -n devops
+```
+
+### Verify logs are being written
+
+```bash
+kubectl exec -n devops time-check -- cat /opt/security/time/time-check.log
+```
