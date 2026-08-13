@@ -1,1 +1,81 @@
+# Resolve Pod Deployment Issue
+
+A junior DevOps team member encountered difficulties deploying a stack on the Kubernetes cluster. The pod fails to start, presenting errors. Let's troubleshoot and rectify the issue promptly.
+
+- There is a pod named `webserver`, and the container within it is named `nginx-container`, its utilizing the `nginx:latest` image.
+
+- Additionally, there's a sidecar container named `sidecar-container` using the `ubuntu:latest` image.
+
+Identify and address the issue to ensure the pod is in the `running` state and the application is accessible.
+
+## Identify the problem
+
+**List all pods:**
+
+```sh
+kubectl get pod
+```
+```
+NAME        READY   STATUS         RESTARTS   AGE
+webserver   1/2     ErrImagePull   0          36s
+```
+
+**Describe the webserver pod:**
+
+```sh
+kubectl describe pod webserver
+```
+
+The pod failed because the `NGINX` image tag was misspelled as `nginx:latests` instead of `nginx:latest`. Kubernetes couldn’t pull the image, so the NGINX container never started. As a result, the sidecar couldn’t find NGINX log files, and the pod stayed in an error state.
+
+## Apply the Fix
+
+**Delete the pod** `webserver`
+
+```sh
+kubectl delete pod webserver
+```
+
+**Apply the corrected pod manifest**
+
+**`webserver-pod.yaml`**
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: webserver
+  labels:
+    app: web-app
+spec:
+  containers:
+    - name: nginx-container
+      image: nginx:latest
+      ports:
+        - containerPort: 80
+
+    - name: sidecar-container
+      image: ubuntu:latest
+      command: ["sh", "-c", "while true; do sleep 3600; done"]
+```
+
+```sh
+kubectl apply -f webserver-pod.yaml
+```
+
+> [!Note]
+> Because image names are immutable in a running Pod, **delete** and **recreate**
+
+
+**Verify Pod Status**
+
+```sh
+kubectl get pod
+```
+
+```
+NAME        READY   STATUS    RESTARTS   AGE
+webserver   2/2     Running   0          13s
+```
+
 
