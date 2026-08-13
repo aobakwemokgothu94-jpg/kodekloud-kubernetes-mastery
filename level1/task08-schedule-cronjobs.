@@ -1,1 +1,41 @@
+# Schedule Cronjobs in Kubernetes
 
+To kickstart the process, they're creating cron jobs in the Kubernetes cluster with placeholder commands. Follow the instructions below:
+
+1. Create a cronjob named `nautilus`.
+2. Set Its schedule to something like `*/4 * * * *`. You can set any schedule for now.
+3. Name the container `cron-nautilus`.
+4. Utilize the `nginx` image with `latest` tag (specify as `nginx:latest`).
+
+**`nautilus-cronjob.yaml`**
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nautilus
+spec:
+  schedule: "*/4 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: cron-nautilus
+              image: nginx:latest
+              command: ["sh", "-c", "echo Nautilus CronJob running"]
+          restartPolicy: OnFailure
+```
+
+## Apply the CronJob
+
+```bash
+kubectl apply -f nautilus-cronjob.yaml
+```
+
+## Verify
+
+```bash
+kubectl get cronjob nautilus
+kubectl describe cronjob nautilus
+```
