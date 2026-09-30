@@ -67,7 +67,7 @@
 - Verified Pod started successfully with mounted volumes.
 
 ---
-
+https://github.com/aobakwemokgothu94-jpg/kodekloud-kubernetes-mastery/blob/main/docs/course-progress/kubernetes_level1_progress.md
 ## Verification
 Each task was validated using:
 - `kubectl get` commands for Pods, Deployments, Services, Jobs, and CronJobs.
