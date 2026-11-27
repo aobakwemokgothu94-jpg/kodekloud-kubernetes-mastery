@@ -1,1 +1,191 @@
+# MySQL Deployment on Kubernetes (Stateful Persistence & Secrets)
+
+This project demonstrates how to deploy a production-style, stateful **MySQL 8.0** database on a Kubernetes cluster. It implements static storage provisioning via a `PersistentVolume` and `PersistentVolumeClaim`, secures sensitive database credentials using Kubernetes `Secrets`, and exposes the database externally through a `NodePort` `Service`.
+
+---
+
+## Architecture & Resource Specifications
+
+| Kubernetes Resource | Resource Name | Configuration & Purpose |
+| :--- | :--- | :--- |
+| **PersistentVolume** | `mysql-pv` | `250Mi` storage, `ReadWriteOnce`, `storageClassName: manual`, backed by `hostPath: /mnt/data` |
+| **PersistentVolumeClaim** | `mysql-pv-claim` | Requests `250Mi` with `storageClassName: manual` to bind explicitly to `mysql-pv` |
+| **Secret** | `mysql-root-pass` | Stores root password (`password: YUIidhb667`) |
+| **Secret** | `mysql-user-pass` | Stores custom application credentials (`username: kodekloud_cap`, `password: 8FmzjvFU6S`) |
+| **Secret** | `mysql-db-url` | Stores target database name (`database: kodekloud_db10`) |
+| **Deployment** | `mysql-deployment` | Runs `mysql:8.0`, mounts `mysql-pv-claim` at `/var/lib/mysql`, injects Secrets as env vars |
+| **Service** | `mysql` | `NodePort` service mapping container port `3306` to cluster node port `30007` |
+
+---
+
+## Step 1: Create Kubernetes Secrets
+
+Before deploying the database container, create the three generic Secrets to inject credentials securely without hardcoding them in the manifest:
+
+```bash
+kubectl create secret generic mysql-root-pass \
+  --from-literal=password=YUIidhb667
+
+kubectl create secret generic mysql-user-pass \
+  --from-literal=username=kodekloud_cap \
+  --from-literal=password=8FmzjvFU6S
+
+kubectl create secret generic mysql-db-url \
+  --from-literal=database=kodekloud_db10
+```
+
+---
+
+## Step 2: Kubernetes Manifest (`mysql-setup.yaml`)
+
+Save the following declarative manifest as `mysql-setup.yaml`. Using `storageClassName: manual` ensures `mysql-pv-claim` binds directly to `mysql-pv` instead of triggering a dynamic storage provisioner.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mysql-pv
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 250Mi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /mnt/data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pv-claim
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 250Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-deployment
+spec:
+  selector:
+    matchLabels:
+      app: mysql
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-root-pass
+                  key: password
+            - name: MYSQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-db-url
+                  key: database
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-user-pass
+                  key: username
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-user-pass
+                  key: password
+          ports:
+            - containerPort: 3306
+              name: mysql
+          volumeMounts:
+            - name: mysql-persistent-storage
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: mysql-persistent-storage
+          persistentVolumeClaim:
+            claimName: mysql-pv-claim
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+spec:
+  type: NodePort
+  ports:
+    - port: 3306
+      targetPort: 3306
+      nodePort: 30007
+  selector:
+    app: mysql
+```
+
+Apply the manifest to the cluster:
+
+```bash
+kubectl apply -f mysql-setup.yaml
+```
+
+---
+
+## Step 3: Verification & Live Output Previews
+
+### 1. Resource & Storage Binding Verification
+Verify that `mysql-pv` and `mysql-pv-claim` are **Bound**, the `NodePort` service is exposed on `30007`, and the MySQL pod is **Running**:
+
+```bash
+kubectl get pv,pvc,pods,svc
+```
+
+**Terminal Output Preview:**
+```text
+NAME                        CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                    STORAGECLASS   VOLUMEATTRIBUTESCLASS   REASON   AGE
+persistentvolume/mysql-pv   250Mi      RWO            Retain           Bound    default/mysql-pv-claim   manual         <unset>                          2m25s
+
+NAME                                   STATUS   VOLUME     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+persistentvolumeclaim/mysql-pv-claim   Bound    mysql-pv   250Mi      RWO            manual         <unset>                 2m25s
+
+NAME                                    READY   STATUS    RESTARTS   AGE
+pod/mysql-deployment-677685d948-4lnhj   1/1     Running   0          2m25s
+
+NAME                 TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE
+service/kubernetes   ClusterIP   10.43.0.1       <none>        443/TCP          63m
+service/mysql        NodePort    10.43.172.176   <none>        3306:30007/TCP   2m25s
+```
+
+### 2. Database & Secret Injection Check
+Connect to the running MySQL instance using the custom user credentials injected via `mysql-user-pass` to confirm `kodekloud_db10` was initialized:
+
+```bash
+kubectl exec -it deploy/mysql-deployment -- mysql -u kodekloud_cap -p8FmzjvFU6S -e "SHOW DATABASES;"
+```
+
+**Expected Output Preview:**
+```text
++--------------------+
+
+| Database           |
++--------------------+
+
+| information_schema |
+| kodekloud_db10     |
+| performance_schema |
++--------------------+
+```
+
+---
+
+## Key Takeaways & Troubleshooting Notes
+* **Static vs. Dynamic Provisioning:** Clusters with a default `StorageClass` (such as `local-path`) will automatically provision a new PV for a PVC unless `storageClassName` is explicitly matched on both the `PV` and `PVC`.
+* **Deployment Strategy:** `strategy.type: Recreate` is used instead of `RollingUpdate` because `ReadWriteOnce` volumes can only be mounted by a single node/pod at a time.
 
