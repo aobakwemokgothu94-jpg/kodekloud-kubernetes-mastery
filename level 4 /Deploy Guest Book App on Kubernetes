@@ -1,1 +1,327 @@
+# Guestbook Application Deployment on Kubernetes
 
+## 1. Project Overview
+
+This project deploys the Guestbook application on a Kubernetes cluster for the Nautilus Application Development Team.
+
+The application uses Redis as its backend data store and a PHP-based frontend to provide the Guestbook interface.
+
+The deployment consists of:
+- One Redis master Deployment.
+- Two Redis slave replicas.
+- Three frontend replicas.
+- Redis master and slave Services.
+- A Redis follower Service.
+- A frontend NodePort Service.
+
+## 2. Kubernetes Architecture
+
+```text
+                  Guestbook Application
+                           |
+                    NodePort 30009
+                           |
+                    Frontend Service
+                           |
+              +------------+------------+
+              |            |            |
+          Frontend     Frontend     Frontend
+           Pod 1        Pod 2        Pod 3
+              |            |            |
+              +------------+------------+
+                           |
+                    Redis Services
+                           |
+               +-----------+-----------+
+               |                       |
+          Redis Master             Redis Follower
+            Service                   Service
+               |                       |
+          Redis Master           Redis Slave Pods
+             Pod                 +-----------+
+                                 |           |
+                              Slave 1     Slave 2
+```
+
+## 3. Environment
+
+| Component | Configuration |
+|---|---|
+| Kubernetes node | jump-host |
+| Kubernetes version | v1.34.1+k3s1 |
+| Namespace | default |
+| Redis master image | redis |
+| Redis slave image | gcr.io/google_samples/gb-redisslave:v3 |
+| Frontend image | gcr.io/google-samples/gb-frontend |
+| Frontend replicas | 3 |
+| Redis slave replicas | 2 |
+| Frontend NodePort | 30009 |
+| Redis port | 6379 |
+| Frontend container port | 80 |
+
+## 4. Redis Master Configuration
+
+File: `redis-master.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-master
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-master
+  template:
+    metadata:
+      labels:
+        app: redis-master
+    spec:
+      containers:
+      - name: master-redis-datacenter
+        image: redis
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        ports:
+        - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-master
+spec:
+  selector:
+    app: redis-master
+  ports:
+  - port: 6379
+    targetPort: 6379
+```
+
+## 5. Redis Slave Configuration
+
+File: `redis-slave.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-slave
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: redis-slave
+  template:
+    metadata:
+      labels:
+        app: redis-slave
+    spec:
+      containers:
+      - name: slave-redis-datacenter
+        image: gcr.io/google_samples/gb-redisslave:v3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        env:
+        - name: GET_HOSTS_FROM
+          value: dns
+        ports:
+        - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-slave
+spec:
+  selector:
+    app: redis-slave
+  ports:
+  - port: 6379
+    targetPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-follower
+spec:
+  selector:
+    app: redis-slave
+  ports:
+  - port: 6379
+    targetPort: 6379
+```
+
+## 6. Frontend Configuration
+
+File: `frontend.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+      - name: php-redis-datacenter
+        image: gcr.io/google-samples/gb-frontend@sha256:a908df8486ff66f2c4daa0d3d8a2fa09846a1fc8efd65649c0109695c7c5cbff
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        env:
+        - name: GET_HOSTS_FROM
+          value: dns
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+spec:
+  type: NodePort
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30009
+```
+
+## 7. Deployment Commands
+
+Apply the Redis master resources:
+
+```bash
+kubectl apply -f redis-master.yaml
+```
+
+Apply the Redis slave resources:
+
+```bash
+kubectl apply -f redis-slave.yaml
+```
+
+Apply the frontend resources:
+
+```bash
+kubectl apply -f frontend.yaml
+```
+
+Check the frontend rollout:
+
+```bash
+kubectl rollout status deployment/frontend --timeout=180s
+```
+
+Check deployments, Pods, Services and endpoints:
+
+```bash
+kubectl get deployments
+kubectl get pods -o wide
+kubectl get svc
+kubectl get endpoints
+```
+
+## 8. Actual Deployment Preview
+
+The following results are from the completed terminal verification.
+
+### Deployments
+
+```text
+NAME           READY   UP-TO-DATE   AVAILABLE
+frontend       3/3     3            3
+redis-master   1/1     1            1
+redis-slave    2/2     2            2
+```
+
+### Pods
+
+```text
+NAME                            READY   STATUS    RESTARTS
+frontend-76cf8db799-7lzhw       1/1     Running   0
+frontend-76cf8db799-czlv5       1/1     Running   0
+frontend-76cf8db799-rg2df       1/1     Running   0
+redis-master-594ffd4b64-9zrjw   1/1     Running   0
+redis-slave-5476897f9-sdgsn     1/1     Running   0
+redis-slave-5476897f9-wvhx7     1/1     Running   0
+```
+
+### Services
+
+```text
+NAME             TYPE        CLUSTER-IP      PORT(S)
+frontend         NodePort    10.43.212.164   80:30009/TCP
+redis-follower   ClusterIP   10.43.128.142   6379/TCP
+redis-master     ClusterIP   10.43.105.71    6379/TCP
+redis-slave      ClusterIP   10.43.223.184   6379/TCP
+```
+
+### Endpoints
+
+```text
+NAME             ENDPOINTS
+frontend         10.22.0.12:80,10.22.0.13:80,10.22.0.14:80
+redis-follower   10.22.0.10:6379,10.22.0.11:6379
+redis-master     10.22.0.9:6379
+redis-slave      10.22.0.10:6379,10.22.0.11:6379
+```
+
+### Rollout result
+
+```text
+deployment "frontend" successfully rolled out
+```
+
+## 9. Verification Summary
+
+| Requirement | Result |
+|---|---|
+| Redis master Deployment | Successful |
+| Redis master Service | Created |
+| Redis slave Deployment | 2/2 Ready |
+| Redis slave Service | Created |
+| Redis follower Service | Created |
+| Frontend Deployment | 3/3 Ready |
+| Frontend NodePort Service | Created |
+| Frontend NodePort | 30009 |
+| Pod status | All 6 Running |
+| Pod restarts | 0 |
+| Service endpoints | Verified |
+
+## 10. Application Testing
+
+The Kubernetes deployment was verified using `kubectl`.
+
+The lab provides an **App** button for accessing the Guestbook application. The browser-based application test should be recorded after confirming that the page loads successfully.
+
+Suggested screenshot evidence:
+1. All three Deployments showing their Ready replica counts.
+2. All six Pods showing Running status.
+3. The four application Services showing their ports.
+4. The Endpoints showing the frontend and Redis backend Pod addresses.
+5. The Guestbook page after opening the App button.
+
+## 11. Conclusion
+
+The Guestbook application infrastructure was successfully deployed on the Kubernetes cluster.
+
+The Redis master, Redis slave replicas and PHP frontend were created according to the required specifications. All six Pods reached Running and Ready status, the frontend Deployment completed its rollout, and the Services and their endpoints were verified.
+
+The frontend is exposed through NodePort 30009, providing access to the Guestbook application through the lab interface.
+
+**Deployment verification: Successful.**
