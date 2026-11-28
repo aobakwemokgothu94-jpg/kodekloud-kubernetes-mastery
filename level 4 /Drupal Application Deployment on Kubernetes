@@ -1,0 +1,495 @@
+# Drupal Application Deployment on Kubernetes
+
+## 1. Project Overview
+
+This project demonstrates deploying a fresh Drupal application on a Kubernetes cluster using a MySQL database with persistent storage.
+
+The deployment uses Kubernetes Deployments, Services, PersistentVolumes, PersistentVolumeClaims, and Secrets to provide a structured environment for the Drupal application.
+
+The objective is to make a fresh Drupal installation available to the Nautilus Application Development team so they can complete the installation themselves.
+
+### Technologies Used
+
+- Kubernetes
+- Docker containers
+- Drupal 8.6
+- MySQL 5.7
+- PersistentVolumes (PV)
+- PersistentVolumeClaims (PVC)
+- Kubernetes Secrets
+- ClusterIP and NodePort Services
+
+## 2. Architecture
+
+```text
+                 User / Browser
+                       |
+                       |
+              NodePort: 30095
+                       |
+                       |
+               drupal-service
+                       |
+                       |
+                Drupal Pod
+                drupal:8.6
+                       |
+                       |
+              MySQL Service
+          drupal-mysql-service
+                 Port 3306
+                       |
+                       |
+                MySQL Pod
+                 mysql:5.7
+                       |
+                       |
+              drupal-mysql-pvc
+                  Request: 3Gi
+                       |
+                       |
+              drupal-mysql-pv
+                  Capacity: 5Gi
+                       |
+                       |
+              /drupal-mysql-data
+```
+
+## 3. Kubernetes Resources
+
+| Resource | Name | Configuration |
+|---|---|---|
+| PersistentVolume | `drupal-mysql-pv` | 5Gi |
+| PersistentVolumeClaim | `drupal-mysql-pvc` | 3Gi request |
+| MySQL Deployment | `drupal-mysql` | 1 replica |
+| Drupal Deployment | `drupal` | 1 replica |
+| MySQL Service | `drupal-mysql-service` | ClusterIP, port 3306 |
+| Drupal Service | `drupal-service` | NodePort 30095 |
+| Kubernetes Secret | `drupal-mysql-secret` | Database credentials |
+
+## 4. Repository Structure
+
+```text
+drupal-kubernetes/
+├── README.md
+├── drupal-storage.yaml
+├── drupal-mysql.yaml
+└── drupal-app.yaml
+```
+
+## 5. Configuration Files
+
+### 5.1 PersistentVolume and PersistentVolumeClaim
+
+File: `drupal-storage.yaml`
+
+The PersistentVolume uses the existing host directory `/drupal-mysql-data` on the Kubernetes node.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: drupal-mysql-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /drupal-mysql-data
+    type: Directory
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: drupal-mysql-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  volumeName: drupal-mysql-pv
+  resources:
+    requests:
+      storage: 3Gi
+```
+
+**Configuration details:**
+
+- PV name: `drupal-mysql-pv`
+- Host path: `/drupal-mysql-data`
+- Storage capacity: `5Gi`
+- Access mode: `ReadWriteOnce`
+- PVC name: `drupal-mysql-pvc`
+- Requested storage: `3Gi`
+- Reclaim policy: `Retain`
+
+### 5.2 MySQL Deployment, Secret and Service
+
+File: `drupal-mysql.yaml`
+
+The MySQL Deployment uses the `mysql:5.7` image and mounts the persistent claim at `/var/lib/mysql`.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: drupal-mysql-secret
+type: Opaque
+stringData:
+  MYSQL_ROOT_PASSWORD: "DrupalRoot_2026!"
+  MYSQL_PASSWORD: "DrupalDB_2026!"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drupal-mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: drupal-mysql
+  template:
+    metadata:
+      labels:
+        app: drupal-mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:5.7
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: drupal-mysql-secret
+                  key: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              value: drupal
+            - name: MYSQL_USER
+              value: drupal
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: drupal-mysql-secret
+                  key: MYSQL_PASSWORD
+          volumeMounts:
+            - name: mysql-storage
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: mysql-storage
+          persistentVolumeClaim:
+            claimName: drupal-mysql-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: drupal-mysql-service
+spec:
+  type: ClusterIP
+  selector:
+    app: drupal-mysql
+  ports:
+    - port: 3306
+      targetPort: 3306
+      protocol: TCP
+```
+
+**Configuration details:**
+
+- MySQL image: `mysql:5.7`
+- Replicas: 1
+- Database name: `drupal`
+- Database username: `drupal`
+- Database port: `3306`
+- Persistent mount: `/var/lib/mysql`
+- Credentials supplied through Kubernetes Secret.
+- Internal Service: `drupal-mysql-service`.
+
+### 5.3 Drupal Deployment and NodePort Service
+
+File: `drupal-app.yaml`
+
+The Drupal Deployment uses the requested `drupal:8.6` image.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drupal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: drupal
+  template:
+    metadata:
+      labels:
+        app: drupal
+    spec:
+      containers:
+        - name: drupal
+          image: drupal:8.6
+          ports:
+            - containerPort: 80
+              protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: drupal-service
+spec:
+  type: NodePort
+  selector:
+    app: drupal
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 80
+      nodePort: 30095
+```
+
+**Configuration details:**
+
+- Drupal image: `drupal:8.6`
+- Replicas: 1
+- Container port: `80`
+- Service name: `drupal-service`
+- Service type: `NodePort`
+- NodePort: `30095`
+
+## 6. Deployment Instructions
+
+All commands were executed from the Kubernetes Jump Host.
+
+### Step 1: Inspect the Kubernetes environment
+
+```bash
+kubectl get nodes -o wide
+kubectl get pods
+kubectl get pv,pvc
+kubectl get storageclass
+ls -ld /drupal-mysql-data
+```
+
+The Kubernetes node was confirmed Ready, and the required storage directory existed.
+
+### Step 2: Deploy persistent storage
+
+```bash
+kubectl apply -f drupal-storage.yaml
+```
+
+Verify:
+
+```bash
+kubectl get pv drupal-mysql-pv
+kubectl get pvc drupal-mysql-pvc
+```
+
+Both resources were subsequently confirmed Bound.
+
+### Step 3: Deploy MySQL
+
+```bash
+kubectl apply -f drupal-mysql.yaml
+```
+
+Verify:
+
+```bash
+kubectl get pods
+kubectl get deployments
+kubectl get svc drupal-mysql-service
+```
+
+### Step 4: Deploy Drupal
+
+```bash
+kubectl apply -f drupal-app.yaml
+```
+
+Verify:
+
+```bash
+kubectl get pods
+kubectl get deployments
+kubectl get svc
+```
+
+### Step 5: Verify service endpoints
+
+```bash
+kubectl get endpoints drupal-service
+kubectl get endpoints drupal-mysql-service
+```
+
+This confirms that both Services have endpoints associated with their respective Pods.
+
+## 7. Execution Previews and Evidence
+
+The following previews are based on the actual terminal outputs obtained during deployment.
+
+### Preview 1: Persistent storage
+
+Command:
+
+```bash
+kubectl get pv drupal-mysql-pv
+kubectl get pvc drupal-mysql-pvc
+```
+
+Actual verified output:
+
+```text
+NAME              CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM
+drupal-mysql-pv   5Gi        RWO            Retain           Bound    default/drupal-mysql-pvc
+
+NAME               STATUS   VOLUME            CAPACITY   ACCESS MODES
+drupal-mysql-pvc   Bound    drupal-mysql-pv   5Gi        RWO
+```
+
+**Evidence:** The PersistentVolume and PersistentVolumeClaim successfully reached Bound status.
+
+### Preview 2: MySQL deployment
+
+Command:
+
+```bash
+kubectl get pods
+kubectl get deployments
+kubectl get svc drupal-mysql-service
+```
+
+Actual output:
+
+```text
+NAME                            READY   STATUS    RESTARTS
+drupal-mysql-5f7d77c5c4-b7pj7   1/1     Running   0
+
+NAME           READY   UP-TO-DATE   AVAILABLE
+drupal-mysql   1/1     1            1
+
+NAME                   TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)
+drupal-mysql-service   ClusterIP   10.43.36.123   <none>        3306/TCP
+```
+
+**Evidence:** MySQL was running with one ready replica, and its internal Service was available on port 3306.
+
+### Preview 3: Drupal deployment
+
+Command:
+
+```bash
+kubectl get pods
+kubectl get deployments
+kubectl get svc
+```
+
+Actual output:
+
+```text
+NAME                            READY   STATUS    RESTARTS
+drupal-6457789d85-fqnb7         1/1     Running   0
+drupal-mysql-5f7d77c5c4-b7pj7   1/1     Running   0
+
+NAME           READY   UP-TO-DATE   AVAILABLE
+drupal         1/1     1            1
+drupal-mysql   1/1     1            1
+
+NAME                   TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)
+drupal-mysql-service   ClusterIP   10.43.36.123   <none>        3306/TCP
+drupal-service         NodePort    10.43.93.119   <none>        80:30095/TCP
+kubernetes             ClusterIP   10.43.0.1      <none>        443/TCP
+```
+
+**Evidence:** Both Drupal and MySQL Deployments reached 1/1 Ready. The Drupal Service was configured on NodePort 30095.
+
+### Preview 4: Service endpoints
+
+Command:
+
+```bash
+kubectl get endpoints drupal-service
+kubectl get endpoints drupal-mysql-service
+```
+
+Actual output:
+
+```text
+NAME             ENDPOINTS       AGE
+drupal-service   10.22.0.10:80   68s
+
+NAME                   ENDPOINTS        AGE
+drupal-mysql-service   10.22.0.9:3306   7m48s
+```
+
+**Evidence:** Both Services had active endpoints pointing to their respective application Pods.
+
+## 8. Drupal Database Installation Details
+
+The following database settings were configured in the MySQL Deployment and are available for the Drupal installation wizard.
+
+| Setting | Value |
+|---|---|
+| Database type | MySQL |
+| Database name | `drupal` |
+| Database username | `drupal` |
+| Database password | `DrupalDB_2026!` |
+| Database host | `drupal-mysql-service` |
+| Database port | `3306` |
+
+The Drupal installation wizard can use these settings to connect to the MySQL database.
+
+The Drupal installation itself is intentionally left for the application development team.
+
+**Security note:** The credentials above are demonstration credentials for this lab. In a production environment, use stronger credentials, protect Secret manifests, and avoid committing plaintext credentials to a public repository. The Drupal container also needs the database connection details supplied through its environment or installer configuration.
+
+## 9. Final Verification Checklist
+
+- [x] Kubernetes node confirmed Ready.
+- [x] Existing `/drupal-mysql-data` directory verified.
+- [x] PersistentVolume `drupal-mysql-pv` created.
+- [x] PersistentVolume capacity configured to 5Gi.
+- [x] PersistentVolumeClaim `drupal-mysql-pvc` created.
+- [x] PVC requested storage of 3Gi.
+- [x] PV and PVC successfully Bound.
+- [x] MySQL Deployment created with one replica.
+- [x] MySQL image configured as `mysql:5.7`.
+- [x] PVC mounted at `/var/lib/mysql`.
+- [x] MySQL Service created on port 3306.
+- [x] Drupal Deployment created with one replica.
+- [x] Drupal image configured as `drupal:8.6`.
+- [x] Drupal NodePort Service created on port 30095.
+- [x] Both application Pods confirmed Running.
+- [x] Both Services confirmed to have active endpoints.
+
+## 10. Skills Demonstrated
+
+This practical deployment demonstrates:
+
+- Kubernetes storage management.
+- PersistentVolumes and PersistentVolumeClaims.
+- HostPath volume configuration.
+- Kubernetes Deployments and replica management.
+- MySQL container deployment.
+- Drupal application deployment.
+- Kubernetes Secrets for database credentials.
+- ClusterIP and NodePort Services.
+- Service selectors and endpoint verification.
+- Container networking and application architecture.
+
+## 11. Conclusion
+
+The Drupal and MySQL infrastructure was successfully deployed on Kubernetes.
+
+Persistent storage was configured using a 5Gi PersistentVolume and a 3Gi PersistentVolumeClaim. MySQL was deployed using `mysql:5.7`, with persistent storage mounted at `/var/lib/mysql`. Drupal was deployed using the requested `drupal:8.6` image.
+
+Both application Deployments reached their desired ready state. The MySQL Service exposed port 3306 internally, while the Drupal Service exposed the application through NodePort 30095.
+
+The environment was prepared for the development team to proceed with the Drupal installation.
+
+**Final result: Drupal and MySQL Kubernetes resources successfully deployed and verified.**
