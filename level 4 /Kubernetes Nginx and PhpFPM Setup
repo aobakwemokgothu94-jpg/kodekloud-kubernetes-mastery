@@ -1,1 +1,427 @@
+# Kubernetes Deployment: Nginx and PHP-FPM
 
+## Project Overview
+
+This project demonstrates deploying a PHP-based application on Kubernetes using two containers running inside a single Pod:
+
+- **Nginx:** Web server responsible for handling HTTP requests.
+- **PHP-FPM:** Processes PHP application requests.
+- **ConfigMap:** Stores the custom Nginx configuration.
+- **emptyDir volume:** Provides shared application storage between the Nginx and PHP-FPM containers.
+- **NodePort Service:** Exposes the application through Kubernetes on port `30012`.
+
+The application was deployed successfully and verified with an HTTP `200 OK` response.
+
+## 1. Project Requirements
+
+| Component | Configuration |
+|---|---|
+| ConfigMap | `nginx-config` |
+| Pod | `nginx-phpfpm` |
+| Nginx container | `nginx-container` |
+| Nginx image | `nginx:latest` |
+| PHP-FPM container | `php-fpm-container` |
+| PHP-FPM image | `php:8.1-fpm-alpine` |
+| Shared volume | `shared-files` |
+| Volume type | `emptyDir` |
+| Nginx port | `8093` |
+| PHP-FPM port | `9000` |
+| Service type | `NodePort` |
+| NodePort | `30012` |
+| Application file | `/var/www/html/index.php` |
+
+## 2. Repository Structure
+
+```text
+nginx-phpfpm/
+├── README.md
+└── nginx-phpfpm.yaml
+```
+
+The `nginx-phpfpm.yaml` file contains all three Kubernetes resources:
+
+1. ConfigMap
+2. Pod
+3. NodePort Service
+
+## 3. Kubernetes Configuration
+
+File: `nginx-phpfpm.yaml`
+
+### 3.1 ConfigMap — Nginx Configuration
+
+The ConfigMap stores the custom Nginx configuration.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        server {
+            listen 8093;
+            server_name localhost;
+
+            root /var/www/html;
+            index index.html index.htm index.php;
+
+            location / {
+                try_files $uri $uri/ =404;
+            }
+
+            location ~ \.php$ {
+                try_files $uri =404;
+                fastcgi_pass 127.0.0.1:9000;
+                fastcgi_index index.php;
+                include fastcgi_params;
+                fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            }
+        }
+    }
+```
+
+**Important configuration details:**
+
+- Nginx listens on port `8093`.
+- The document root is `/var/www/html`.
+- PHP files are processed through PHP-FPM on port `9000`.
+- The index directive supports HTML and PHP index files.
+
+### 3.2 Pod — Nginx and PHP-FPM
+
+The Pod contains two containers sharing the same application directory.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-phpfpm
+  labels:
+    app: nginx-phpfpm
+spec:
+  containers:
+    - name: nginx-container
+      image: nginx:latest
+      ports:
+        - containerPort: 8093
+          protocol: TCP
+      volumeMounts:
+        - name: shared-files
+          mountPath: /var/www/html
+        - name: nginx-config-volume
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+          readOnly: true
+
+    - name: php-fpm-container
+      image: php:8.1-fpm-alpine
+      ports:
+        - containerPort: 9000
+          protocol: TCP
+      volumeMounts:
+        - name: shared-files
+          mountPath: /var/www/html
+
+  volumes:
+    - name: shared-files
+      emptyDir: {}
+    - name: nginx-config-volume
+      configMap:
+        name: nginx-config
+```
+
+**Key implementation details:**
+
+- Both containers mount `shared-files` at `/var/www/html`.
+- The `emptyDir` volume allows both containers to access the same application files.
+- The ConfigMap is mounted into the Nginx container as `/etc/nginx/nginx.conf`.
+- The `subPath` setting mounts the `nginx.conf` key as a file.
+- Nginx communicates with PHP-FPM using `127.0.0.1:9000`, because both containers run inside the same Pod.
+
+### 3.3 NodePort Service
+
+The Service exposes Nginx through Kubernetes NodePort `30012`.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-phpfpm
+spec:
+  type: NodePort
+  selector:
+    app: nginx-phpfpm
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8093
+      targetPort: 8093
+      nodePort: 30012
+```
+
+## 4. Deployment Instructions
+
+Run the following commands from the Kubernetes Jump Host.
+
+### Step 1: Create the project directory
+
+```bash
+mkdir -p ~/nginx-phpfpm
+cd ~/nginx-phpfpm
+```
+
+### Step 2: Confirm the PHP application file exists
+
+```bash
+ls -l /opt/index.php
+```
+
+### Step 3: Validate the Kubernetes manifest
+
+```bash
+kubectl apply --dry-run=client -f nginx-phpfpm.yaml
+```
+
+### Step 4: Deploy the resources
+
+```bash
+kubectl apply -f nginx-phpfpm.yaml
+```
+
+### Step 5: Verify the Pod, ConfigMap and Service
+
+```bash
+kubectl get pods
+kubectl get configmap nginx-config
+kubectl get svc nginx-phpfpm
+```
+
+### Step 6: Copy the PHP application into the Nginx container
+
+```bash
+kubectl cp /opt/index.php \
+  nginx-phpfpm:/var/www/html/index.php \
+  -c nginx-container
+```
+
+### Step 7: Verify the shared volume
+
+Check the file inside the Nginx container:
+
+```bash
+kubectl exec nginx-phpfpm \
+  -c nginx-container -- \
+  ls -l /var/www/html/index.php
+```
+
+Check the same file inside PHP-FPM:
+
+```bash
+kubectl exec nginx-phpfpm \
+  -c php-fpm-container -- \
+  ls -l /var/www/html/index.php
+```
+
+### Step 8: Validate Nginx configuration
+
+```bash
+kubectl exec nginx-phpfpm \
+  -c nginx-container -- nginx -t
+```
+
+### Step 9: Test application access
+
+Port-forward the Kubernetes Service:
+
+```bash
+kubectl port-forward svc/nginx-phpfpm 18093:8093
+```
+
+In a second terminal, execute:
+
+```bash
+curl -i http://127.0.0.1:18093/
+```
+
+## 5. Execution Previews and Evidence
+
+The following previews document the actual successful command outputs obtained during deployment.
+
+### Preview 1: Kubernetes resources deployed
+
+Command:
+
+```bash
+kubectl get pods
+kubectl get configmap nginx-config
+kubectl get svc nginx-phpfpm
+```
+
+Actual output:
+
+```text
+NAME           READY   STATUS    RESTARTS   AGE
+nginx-phpfpm   2/2     Running   0          15s
+
+NAME           DATA   AGE
+nginx-config   1      15s
+
+NAME           TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE
+nginx-phpfpm   NodePort   10.43.124.111   <none>        8093:30012/TCP   15s
+```
+
+**Evidence:** Both containers were running successfully, the ConfigMap existed, and the NodePort Service was created.
+
+### Preview 2: Shared application volume verified
+
+Commands:
+
+```bash
+kubectl exec nginx-phpfpm \
+  -c nginx-container -- \
+  ls -l /var/www/html/index.php
+
+kubectl exec nginx-phpfpm \
+  -c php-fpm-container -- \
+  ls -l /var/www/html/index.php
+```
+
+Actual output:
+
+```text
+-rw-r--r-- 1 root root 9 Nov 28 05:38 /var/www/html/index.php
+
+-rw-r--r--    1 root     root             9 Nov 28 05:38 /var/www/html/index.php
+```
+
+**Evidence:** The PHP application file was available in both containers, confirming that the shared volume was working.
+
+### Preview 3: Nginx configuration validation
+
+Command:
+
+```bash
+kubectl exec nginx-phpfpm \
+  -c nginx-container -- nginx -t
+```
+
+Actual output:
+
+```text
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+```
+
+**Evidence:** The custom Nginx configuration passed syntax validation.
+
+### Preview 4: PHP application response
+
+Command:
+
+```bash
+curl -i http://127.0.0.1:18093/
+```
+
+Actual output:
+
+```http
+HTTP/1.1 200 OK
+Server: nginx/1.31.10
+Date: Sat, 28 Nov 2026 05:43:10 GMT
+Content-Type: text/html; charset=UTF-8
+Transfer-Encoding: chunked
+Connection: keep-alive
+X-Powered-By: PHP/8.1.34
+
+It works!
+```
+
+**Evidence:** The application returned HTTP `200 OK`, and the response header confirmed PHP 8.1.34 processed the request.
+
+## 6. Architecture and Request Flow
+
+```text
+              Client / Browser
+                     |
+                     |
+               NodePort 30012
+                     |
+                     |
+              Kubernetes Service
+                     |
+                     |
+              Nginx Container
+                Port 8093
+                     |
+                     |
+             PHP-FPM FastCGI
+                Port 9000
+                     |
+                     |
+              PHP-FPM Container
+                     |
+                     |
+             Shared emptyDir
+                /var/www/html
+                     |
+                     |
+                 index.php
+```
+
+Both containers access the same application directory through the shared `emptyDir` volume.
+
+## 7. Final Verification Checklist
+
+- [x] ConfigMap `nginx-config` created.
+- [x] Pod `nginx-phpfpm` created.
+- [x] Nginx container deployed.
+- [x] PHP-FPM container deployed.
+- [x] Both containers reached Running state.
+- [x] Shared `emptyDir` volume configured.
+- [x] Nginx configuration mounted successfully.
+- [x] PHP application copied into the Nginx container.
+- [x] PHP application visible in both containers.
+- [x] Nginx configuration passed validation.
+- [x] NodePort Service configured on port `30012`.
+- [x] HTTP response returned `200 OK`.
+- [x] PHP application displayed `It works!`.
+
+## 8. Skills Demonstrated
+
+This practical exercise demonstrates:
+
+- Kubernetes Pod configuration and multi-container deployments.
+- Kubernetes ConfigMaps and configuration mounting.
+- Shared storage using `emptyDir`.
+- Nginx web server configuration.
+- PHP-FPM integration using FastCGI.
+- Kubernetes Services and NodePort networking.
+- Container-level troubleshooting and verification.
+- Application testing using `curl` and HTTP response headers.
+
+## 9. Conclusion
+
+The PHP-based application was successfully deployed on Kubernetes using Nginx and PHP-FPM in a multi-container Pod.
+
+A ConfigMap supplied the custom Nginx configuration, while a shared `emptyDir` volume allowed both containers to access the PHP application files. A NodePort Service exposed the web application through port `30012`.
+
+The deployment was verified by confirming that both containers were Running, checking the shared application file, validating the Nginx configuration, and testing the application through HTTP.
+
+The final application response was:
+
+```text
+HTTP/1.1 200 OK
+
+It works!
+```
+
+**Result: Successful Kubernetes Nginx and PHP-FPM application deployment.**
